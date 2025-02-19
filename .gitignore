@@ -40,3 +40,5 @@
 /.vscode
 /include/build
 /include/opencv
+/build_rpi
+/rpi-cross-compile

@@ -7,6 +7,8 @@
 #include <chrono>
 #include "StereoCamera.h"
 #include "LiDAR.h"
+
+bool interupt = false;
 // #include <filesystem> // For creating folders (C++17)
 
 void camera_record(StereoCamera stereoCam, VisualOdometry vo, 
@@ -18,7 +20,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
     auto start = std::chrono::steady_clock::now();
     int frameCounter = 0;
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
-    while (true) {
+    while (!interupt) {
         // cv::Mat leftFrame, rightFrame;
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
