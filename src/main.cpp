@@ -7,9 +7,51 @@
 #include <chrono>
 #include "StereoCamera.h"
 #include "LiDAR.h"
+#include <atomic>
+#include <unistd.h>  // For _getch() (on Unix-like systems)
+#include <termios.h> // For termios functions
 
-bool interupt = false;
-// #include <filesystem> // For creating folders (C++17)
+std::atomic<bool> interupt(false);  // Atomic flag to safely stop the process
+
+// Function to handle user input for interrupting the process
+// void user_input() {
+//     std::string userCommand;
+//     while (true) {
+//         // std::getline(std::cin, userCommand);
+//         // if (userCommand == "stop") {
+//         //     interupt = true; // Set the flag to true when the user inputs "stop"
+//         //     break;
+//         // }
+//         char key;
+//         if (std::cin >> key) {
+//             if (key == 27) { // Check if Esc key is pressed (ASCII code 27)
+//                 interupt = true;
+//                 std::cout << "Esc key pressed. Interrupt signal sent!" << std::endl;
+//                 break;
+//             }
+//         }
+//     }
+// }
+
+// Non-blocking keyboard input function for ESC key press
+void listen_for_esc() {
+    struct termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt);  // Get current terminal settings
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO); // Disable canonical mode and echo
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt); // Apply new settings
+
+    while (true) {
+        char ch = getchar(); // Read a single character
+        if (ch == 27) { // ESC key
+            interupt = true;  // Set interrupt flag
+            std::cout << "Esc key pressed. Interrupt signal sent!" << std::endl;
+            break;
+        }
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore old terminal settings
+}
 
 void camera_record(StereoCamera stereoCam, VisualOdometry vo, 
                     std::vector<std::vector<double>>& totalTranslation, std::vector<cv::Mat>& totalRotation){
@@ -18,13 +60,14 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
     
     auto startTime = std::chrono::steady_clock::now();
     auto start = std::chrono::steady_clock::now();
+    auto totalTime =  std::chrono::duration_cast<std::chrono::milliseconds>(startTime - start).count();
     int frameCounter = 0;
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
     while (!interupt) {
         // cv::Mat leftFrame, rightFrame;
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
-
+        
         if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
             // Capture stereo frames
             if (stereoCam.captureFrames(leftFrame, rightFrame)) {
@@ -36,7 +79,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
                     motionPair = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame);
                     totalTranslation.push_back(motionPair.first);
                     totalRotation.push_back(motionPair.second);
-                    std::cout<<motionPair.first[2]<<std::endl;
+                    // std::cout<<motionPair.first[2]<<std::endl;
                 }
                 // Update the pre-frame values here **after** processing
                 leftFrame_pre = leftFrame.clone();
@@ -55,11 +98,13 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
 
             frameCounter++;
             startTime = std::chrono::steady_clock::now(); // Reset timer
+            std::cout << "Elapsed time: " << totalTime << " milliseconds\n";
         }
         auto curTime = std::chrono::steady_clock::now();
         auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
-        if (totalTime >= 4000) // Stop after 1000 frames (adjust as needed)
-            break;
+        
+        // if (totalTime >= 7000) // Stop after 1000 frames (adjust as needed)
+        //     break;
     }
 
 }
@@ -108,7 +153,21 @@ int main(int argc, char** argv) {
 
     std::vector<cv::Mat> totalRotation;
     std::vector<std::vector<double>> totalTranslation;
-    camera_record(stereoCam, vo, totalTranslation, totalRotation);
+    // camera_record(stereoCam, vo, totalTranslation, totalRotation);
+
+    // Launching user input in a separate thread
+    std::thread inputThread(listen_for_esc);
+
+    // Start the recording threads
+    std::thread cameraThread(camera_record, stereoCam, vo, std::ref(totalTranslation), std::ref(totalRotation));
+    // std::thread lidarThread(lidar_record, lidar);
+
+    // Wait for the recording threads to finish
+    cameraThread.join();
+    // lidarThread.join();
+
+    // Join the user input thread (this thread will wait for "stop" command)
+    inputThread.join();
 
     
     cv::FileStorage fs("../transformations.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);

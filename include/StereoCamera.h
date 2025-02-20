@@ -36,12 +36,14 @@ class StereoCamera {
     private:
         cv::VideoCapture leftCam;   // Camera stream for the left view
         cv::VideoCapture rightCam;  // Camera stream for the right view
+        int leftCamIDp; int rightCamIDp;
 
         /**
          * Checks if the cameras have been opened successfully.
          * @return true if both cameras are initialized properly, false otherwise
          */
         bool checkCameras();
+        void splitStereoImage(cv::Mat& leftFrame, cv::Mat& rightFrame);
 };
 
 class VisualOdometry {

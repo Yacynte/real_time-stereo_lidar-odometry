@@ -3,12 +3,27 @@
 
 // Constructor: Open both left and right cameras
 StereoCamera::StereoCamera(int leftCamID, int rightCamID) {
+    leftCamIDp = leftCamID;
+    rightCamIDp = rightCamID;
     leftCam.open(leftCamID);
-    rightCam.open(rightCamID);
 
-    if (!checkCameras()) {
-        std::cerr << "Failed to open one or both cameras." << std::endl;
+    // Verify resolution
+    // double width = leftCam.get(cv::CAP_PROP_FRAME_WIDTH);
+    // double height = leftCam.get(cv::CAP_PROP_FRAME_HEIGHT);
+
+    if (rightCamID == 100){
+        // Set resolution to 3840x1080 (side-by-side stereo)
+        leftCam.set(cv::CAP_PROP_FRAME_WIDTH, 3840);
+        leftCam.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
+        
     }
+    else{
+        rightCam.open(rightCamID);
+    }
+
+    // if (!checkCameras()) {
+    //     std::cerr << "Failed to open one or both cameras." << std::endl;
+    // }
 }
 
 // Destructor: Release camera resources when the object goes out of scope
@@ -17,13 +32,63 @@ StereoCamera::~StereoCamera() {
     rightCam.release();
 }
 
+void StereoCamera::splitStereoImage(cv::Mat &leftFrame, cv::Mat &rightFrame) {
+    cv::Mat frame;
+    leftCam.read(frame);  // Capture a frame
+    // Check if frame is empty
+    if (!frame.empty()) {
+        // Define left and right ROI
+        // std::cout << "Resolution: " << frame.cols << "x" << frame.rows << std::endl;
+        cv::Rect leftROI(0, 0, frame.cols / 2, frame.rows);
+        cv::Rect rightROI(frame.cols / 2, 0, frame.cols / 2, frame.rows);
+    
+        // Extract left and right images
+        cv::Mat frame1; cv::Mat frame2;
+
+        frame1 = frame(leftROI).clone();
+        frame2 = frame(rightROI).clone();
+        
+        cv::resize(frame1, leftFrame, cv::Size(640, 480));
+        cv::resize(frame2, rightFrame, cv::Size(640, 480));
+    
+        // Show images
+        // cv::imshow("Left Image", leftFrame);
+        // cv::imshow("Right Image", rightFrame);
+        // cv::waitKey(0);
+    }
+    // cv::imshow("Right Frame", frame);
+    //     cv::waitKey(0);  // Wait for a key press
+    if (frame.empty()) {
+        std::cerr << "Error: Captured frame is empty!" << std::endl;
+        return;
+    }
+
+    int width = frame.cols;
+    int height = frame.rows;
+
+    // std::cout << "Image Size: " << width << "x" << height << std::endl;
+
+    // Ensure the width is even (otherwise, splitting will be incorrect)
+    if (width % 2 != 0) {
+        std::cerr << "Error: Image width is not even!" << std::endl;
+        return;
+    }
+
+    // Split the stereo image into left and right frames
+    leftFrame = frame(cv::Rect(0, 0, width / 2, height));        // Left half
+    rightFrame = frame(cv::Rect(width / 2, 0, width / 2, height));  // Right half
+}
+
 // Captures a stereo pair of frames
 bool StereoCamera::captureFrames(cv::Mat& leftFrame, cv::Mat& rightFrame) {
-    if (!leftCam.isOpened() || !rightCam.isOpened()) {
-        std::cerr << "Error: One or both cameras are not opened." << std::endl;
+    if (!checkCameras()) {
         return false;
     }
 
+    if (rightCamIDp == 100){
+        splitStereoImage(leftFrame, rightFrame);
+        return true;
+    }
     // Read a frame from both the left and right cameras
     if (!leftCam.read(leftFrame)) {
         std::cerr << "Error: Failed to capture left frame." << std::endl;
@@ -42,6 +107,10 @@ bool StereoCamera::captureFrames(cv::Mat& leftFrame, cv::Mat& rightFrame) {
 bool StereoCamera::checkCameras() {
     if (!leftCam.isOpened()) {
         std::cerr << "Error: Could not open left camera stream." << std::endl;
+    }
+
+    if (rightCamIDp == 100){
+        return leftCam.isOpened();
     }
 
     if (!rightCam.isOpened()) {
