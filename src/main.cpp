@@ -60,7 +60,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
     
     auto startTime = std::chrono::steady_clock::now();
     auto start = std::chrono::steady_clock::now();
-    auto totalTime =  std::chrono::duration_cast<std::chrono::milliseconds>(startTime - start).count();
+    // auto totalTime =  std::chrono::duration_cast<std::chrono::milliseconds>(startTime - start).count();
     int frameCounter = 0;
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
     while (!interupt) {
@@ -71,14 +71,16 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
         if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
             // Capture stereo frames
             if (stereoCam.captureFrames(leftFrame, rightFrame)) {
+                startTime = std::chrono::steady_clock::now(); // Reset timer
                 cv::imwrite("../data/left/left_" + std::to_string(frameCounter) + ".png", leftFrame);
                 cv::imwrite("../data/right/right_" + std::to_string(frameCounter) + ".png", rightFrame);
                 if (frameCounter > 0){
                     std::pair<std::vector<double>, cv::Mat> motionPair;
-                    std::cout<<"before Odom: "<< frameCounter <<std::endl;
                     motionPair = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame);
                     totalTranslation.push_back(motionPair.first);
                     totalRotation.push_back(motionPair.second);
+                    // std::cout<<"frame Count: "<< frameCounter <<std::endl;
+                    // std::cout<<"time diff ms: "<< elapsed <<std::endl;
                     // std::cout<<motionPair.first[2]<<std::endl;
                 }
                 // Update the pre-frame values here **after** processing
@@ -94,18 +96,21 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
             } 
             else {
                 std::cerr << "Failed to capture stereo frames" << std::endl;
+                break;
             }                   
 
             frameCounter++;
-            startTime = std::chrono::steady_clock::now(); // Reset timer
-            std::cout << "Elapsed time: " << totalTime << " milliseconds\n";
-        }
-        auto curTime = std::chrono::steady_clock::now();
-        auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
+            
+        }        
+        // std::cout << "Elapsed time: " << totalTime << " milliseconds\n";
         
         // if (totalTime >= 7000) // Stop after 1000 frames (adjust as needed)
         //     break;
     }
+    auto curTime = std::chrono::steady_clock::now();
+    auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
+    std::cout<<"frame Count: "<< frameCounter <<std::endl;
+    std::cout<<"time diff ms: "<< totalTime <<std::endl;
 
 }
 
@@ -148,7 +153,7 @@ int main(int argc, char** argv) {
     std::istringstream(argv[2]) >> right_camera_id;
 
     StereoCamera stereoCam(left_camera_id, right_camera_id);
-    LiDAR lidar;
+    // LiDAR lidar;
     VisualOdometry vo;
 
     std::vector<cv::Mat> totalRotation;

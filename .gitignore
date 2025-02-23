@@ -42,3 +42,5 @@
 /include/opencv
 /build_rpi
 /rpi-cross-compile
+/cam_param.cpp
+/cam_param

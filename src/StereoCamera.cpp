@@ -5,7 +5,7 @@
 StereoCamera::StereoCamera(int leftCamID, int rightCamID) {
     leftCamIDp = leftCamID;
     rightCamIDp = rightCamID;
-    leftCam.open(leftCamID);
+    leftCam.open(leftCamID, cv::CAP_V4L2);
 
     // Verify resolution
     // double width = leftCam.get(cv::CAP_PROP_FRAME_WIDTH);
@@ -18,7 +18,7 @@ StereoCamera::StereoCamera(int leftCamID, int rightCamID) {
         
     }
     else{
-        rightCam.open(rightCamID);
+        rightCam.open(rightCamID, cv::CAP_V4L2);
     }
 
     // if (!checkCameras()) {
@@ -58,25 +58,10 @@ void StereoCamera::splitStereoImage(cv::Mat &leftFrame, cv::Mat &rightFrame) {
     }
     // cv::imshow("Right Frame", frame);
     //     cv::waitKey(0);  // Wait for a key press
-    if (frame.empty()) {
+    else {
         std::cerr << "Error: Captured frame is empty!" << std::endl;
         return;
     }
-
-    int width = frame.cols;
-    int height = frame.rows;
-
-    // std::cout << "Image Size: " << width << "x" << height << std::endl;
-
-    // Ensure the width is even (otherwise, splitting will be incorrect)
-    if (width % 2 != 0) {
-        std::cerr << "Error: Image width is not even!" << std::endl;
-        return;
-    }
-
-    // Split the stereo image into left and right frames
-    leftFrame = frame(cv::Rect(0, 0, width / 2, height));        // Left half
-    rightFrame = frame(cv::Rect(width / 2, 0, width / 2, height));  // Right half
 }
 
 // Captures a stereo pair of frames
