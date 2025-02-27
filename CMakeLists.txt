@@ -14,18 +14,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find dependencies
 find_package(OpenCV REQUIRED)
-find_package(PCL REQUIRED COMPONENTS common io people)
+find_package(PCL REQUIRED COMPONENTS common io people filters)
 
 # Include directories
 include_directories(${OpenCV_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
-link_directories(${PCL_LIBRARY_DIRS})
+link_directories(${PCL_LIBRARY_DIRS} )
+link_directories(${RPLIDAR_SDK_LIB_DIR})        # Add the RPLIDAR SDK library directory to the linker search path
 add_definitions(${PCL_DEFINITIONS})
 
+
 # Add executable
-add_executable(StereoLiDARRecorder src/main.cpp src/StereoCamera.cpp src/LiDAR.cpp)
+add_executable(StereoLiDARRecorder src/main.cpp src/StereoCamera.cpp src/LidarScanner.cpp)
 
 # Link libraries
-target_link_libraries(StereoLiDARRecorder ${OpenCV_LIBS} ${PCL_LIBRARIES} pthread)
+target_link_libraries(StereoLiDARRecorder 
+                    ${OpenCV_LIBS}          # Link the opencv SDK static library
+                    ${PCL_LIBRARIES}        # Link the pcl SDK static library
+                    pthread
+                    ${RPLIDAR_SDK_LIB_DIR}/libsl_lidar_sdk.so     # Link the RPLIDAR SDK dynamic library
+                    )
 
 # Include directories
-include_directories(${CMAKE_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
+include_directories(${CMAKE_SOURCE_DIR}/include         # Include MY headers
+                    ${OpenCV_INCLUDE_DIRS}              # Include opencv headers
+                    ${PCL_INCLUDE_DIRS}                 # Include PCL headers
+                    ${RPLIDAR_SDK_DIR}/sdk/include      # Include RPLIDAR SDK headers
+                    ${RPLIDAR_SDK_DIR}/sdk/src          # Include RPLIDAR SDK headers
+                    )

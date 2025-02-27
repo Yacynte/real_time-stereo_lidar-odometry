@@ -330,7 +330,7 @@ void VisualOdometry::feature_matching(const cv::Mat& left_prev, const cv::Mat& l
 
 
 std::pair<cv::Mat, cv::Mat> VisualOdometry::StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur, 
-                                    cv::Mat rightImage_pre, cv::Mat rightImage_cur){
+                                    cv::Mat rightImage_pre, cv::Mat rightImage_cur, cv::Mat init_R, cv::Mat init_T){
 
     if (leftImage_pre.empty() || leftImage_cur.empty() || rightImage_pre.empty() || rightImage_cur.empty()) {
         std::cerr << "One or all images are Empty!" << std::endl;
@@ -365,6 +365,8 @@ std::pair<cv::Mat, cv::Mat> VisualOdometry::StereoOdometry(cv::Mat leftImage_pre
 
     // totalTranslation.push_back(translation_vector);
     // totalRotation.push_back(rotation_matrix);
+    translation_vector += init_T;
+    rotation_matrix = init_R*rotation_matrix;
     return std::make_pair(translation_vector, rotation_matrix);
 
 }

@@ -53,7 +53,7 @@ class VisualOdometry {
 
         // Method to compute stereo odometry
         std::pair<cv::Mat, cv::Mat> StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur,
-                        cv::Mat rightImage_pre, cv::Mat rightImage_cur);
+                        cv::Mat rightImage_pre, cv::Mat rightImage_cur, cv::Mat init_R, cv::Mat init_T);
 
         // Motion estimation from two sets of 2D points and depth map.
         bool motionEstimation(const std::vector<cv::Point2f>& image1_points, const std::vector<cv::Point2f>& image2_points,
