@@ -12,8 +12,8 @@ void stereoOdom(std::vector<cv::Mat> leftImages, std::vector<cv::Mat> rightImage
     int frameCounter = 0;
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
     // Initialize cumulative odometry
-    cv::Mat cumulativeRotation = cv::Mat::eye(3, 3, CV_64F); // Identity matrix for rotation
-    cv::Mat cumulativeTranslation = cv::Mat::zeros(3, 1, CV_64F); // Zero vector for translation
+    cv::Mat cumulativeRotation = cv::Mat::eye(3, 3, CV_32F); // Identity matrix for rotation
+    cv::Mat cumulativeTranslation = cv::Mat::zeros(3, 1, CV_32F); // Zero vector for translation
 
     // Vectors to store cumulative rotations and translations
     // std::vector<cv::Mat> cumulativeRotations;

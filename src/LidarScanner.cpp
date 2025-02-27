@@ -94,7 +94,7 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr LidarScanner1::convertScanToPointCloud() {
 pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_odometry::downsampleCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
     pcl::VoxelGrid<pcl::PointXYZ> sor;
     sor.setInputCloud(cloud);
-    sor.setLeafSize(0.05f, 0.05f, 0.05f);
+    sor.setLeafSize(0.9f, 0.9f, 0.9f);
     pcl::PointCloud<pcl::PointXYZ>::Ptr filteredCloud(new pcl::PointCloud<pcl::PointXYZ>);
     sor.filter(*filteredCloud);
     return filteredCloud;
@@ -117,7 +117,7 @@ Eigen::Matrix4f lidar_odometry::estimateMotion(pcl::PointCloud<pcl::PointXYZ>::P
     icp.setInputTarget(target);
     icp.setMaxCorrespondenceDistance(0.1);
     icp.setTransformationEpsilon(1e-6);
-    icp.setMaximumIterations(50);
+    icp.setMaximumIterations(1000);
 
     pcl::PointCloud<pcl::PointXYZ> Final;
     icp.align(Final);
@@ -125,20 +125,31 @@ Eigen::Matrix4f lidar_odometry::estimateMotion(pcl::PointCloud<pcl::PointXYZ>::P
     return icp.getFinalTransformation();
 }
 
-std::pair<cv::Mat, cv::Mat> lidar_odometry::lidar_odom(pcl::PointCloud<pcl::PointXYZ>::Ptr &scan1_org, 
-                                                        pcl::PointCloud<pcl::PointXYZ>::Ptr &scan2_org, cv::Mat init_R, cv::Mat init_T ){
+// Function to update pose based on relative rotation and translation
+void lidar_odometry::updatePose(std::vector<cv::Mat>& T_prev, cv::Mat& T_rel, int id) {
+    
+    // Invert the transformation matrix (transf)
+    // cv::Mat transf_inv = T_rel.inv();
+    // cv::invert(T_rel, transf_inv);
+
+    T_prev.push_back(T_prev.back() * T_rel);          // New rotation: R1 = R_rel * R0
+    // T_prev.push_back(R_rel * T_prev.back() + T_rel);  // New translation: T1 = R_rel * T0 + T_rel
+}
+
+cv::Mat lidar_odometry::lidar_odom(pcl::PointCloud<pcl::PointXYZ>::Ptr scan1_org, 
+                                                        pcl::PointCloud<pcl::PointXYZ>::Ptr scan2_org){ //, cv::Mat init_R, cv::Mat init_T ){
     // Load two consecutive point clouds (Replace with real LIDAR scans)
-    std::cout << "Creating emty copies...."<<std::endl;
+    // std::cout << "Creating emty copies...."<<std::endl;
     // Create local copies
     pcl::PointCloud<pcl::PointXYZ>::Ptr scan1(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr scan2(new pcl::PointCloud<pcl::PointXYZ>);
-    std::cout << " copies created!!"<<std::endl;
-    std::cout << " downsampling original 1 to copy !!"<<std::endl;
+    // std::cout << " copies created!!"<<std::endl;
+    // std::cout << " downsampling original 1 to copy !!"<<std::endl;
     // Downsample the copies (originals remain unchanged)
     scan1 = downsampleCloud(scan1_org);
-    std::cout << " downsampling original 2 to copy !!"<<std::endl;
+    // std::cout << " downsampling original 2 to copy !!"<<std::endl;
     scan2 = downsampleCloud(scan2_org);
-    std::cout << " downsampling ocomplete !!"<<std::endl;
+    // std::cout << " downsampling and filtering complete !!"<<std::endl;
 
     // Downsample the point clouds
     // scan1 = downsampleCloud(scan1);
@@ -146,27 +157,33 @@ std::pair<cv::Mat, cv::Mat> lidar_odometry::lidar_odom(pcl::PointCloud<pcl::Poin
 
     // Extract features (sharp edges & planes)
     pcl::PointCloud<pcl::PointXYZ>::Ptr edges1(new pcl::PointCloud<pcl::PointXYZ>);
+    // std::cout << " edges 1 complete !!"<<std::endl;
     pcl::PointCloud<pcl::PointXYZ>::Ptr planes1(new pcl::PointCloud<pcl::PointXYZ>);
+    // std::cout << " planes 1 complete !!"<<std::endl;
     extractFeatures(scan1, edges1, planes1);
-
+    // std::cout << " extract features 1 complete !!"<<std::endl;
     pcl::PointCloud<pcl::PointXYZ>::Ptr edges2(new pcl::PointCloud<pcl::PointXYZ>);
+    // std::cout << " edges 2 complete !!"<<std::endl;
     pcl::PointCloud<pcl::PointXYZ>::Ptr planes2(new pcl::PointCloud<pcl::PointXYZ>);
+    // std::cout << " planes 2 complete !!"<<std::endl;
     extractFeatures(scan2, edges2, planes2);
+    // std::cout << " extract features 2 complete !!"<<std::endl;
 
     // Estimate motion using ICP on edge features
     transformation = estimateMotion(edges1, edges2);
 
     // Convert Eigen to OpenCV
-    rotation_matrix = cv::Mat(3, 3, CV_32F);
-    translation_vector = cv::Mat(3, 1, CV_32F);
+    transformation_matrix = cv::Mat(4, 4, CV_32F);
+    // translation_vector = cv::Mat(3, 1, CV_32F);
 
     // Copy data
-    memcpy(init_R.data, transformation.data(), sizeof(float) * 9);
-    memcpy(init_T.data, transformation.data(), sizeof(float) * 3);
+    memcpy(transformation_matrix.data, transformation.data(), sizeof(float) * 16);
+    // memcpy(translation_vector.data, transformation.data(), sizeof(float) * 3);
 
-    translation_vector += init_T;
-    rotation_matrix = init_R*rotation_matrix;
-    return std::make_pair(translation_vector, rotation_matrix);
+    // translation_vector += init_T;
+    // rotation_matrix = init_R*rotation_matrix;
+    // return std::make_pair(translation_vector, rotation_matrix);
+    return transformation_matrix.t();
     // Print the estimated transformation (R, T)
     // cout << "Estimated Transformation:\n" << transformation << endl;
 
@@ -180,8 +197,11 @@ LidarScanner::LidarScanner(const std::string& port)
 
 LidarScanner::~LidarScanner() {
     if (lidar_) {
+        lidar_->stopMotor();
+        lidar_->stop();
         lidar_->disconnect();
         RPlidarDriver::DisposeDriver(lidar_);
+        lidar_ = nullptr;
     }
 }
 
@@ -199,6 +219,12 @@ bool LidarScanner::initialize() {
         lidar_ = nullptr;
         return false;
     }
+    // std::cout << "Attempting to start motor!" << std::endl;
+    lidar_->startMotor();
+    // std::cout << "Motor started successfully!" << std::endl;
+    // std::cout << "Attempting to start scan!" << std::endl;
+    lidar_->startScan(false, true);
+    // std::cout << "Scan started successfully!" << std::endl;
 
     return true;
 }
@@ -206,12 +232,7 @@ bool LidarScanner::initialize() {
 bool LidarScanner::getScans(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_) {
     if (!lidar_) return false;
 
-    std::cout << "Attempting to start motor!" << std::endl;
-    lidar_->startMotor();
-    std::cout << "Motor started successfully!" << std::endl;
-    std::cout << "Attempting to start scan!" << std::endl;
-    lidar_->startScan(false, true);
-    std::cout << "Scan started successfully!" << std::endl;
+    
 
     rplidar_response_measurement_node_hq_t nodes[8192];
     size_t count = sizeof(nodes) / sizeof(nodes[0]);
@@ -240,6 +261,6 @@ bool LidarScanner::getScans(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_) {
         }
     }
 
-    std::cout << "Cloud size using .size(): " << cloud_->points.size() << std::endl;
+    // std::cout << "Cloud size using .size(): " << cloud_->points.size() << std::endl;
     return true;
 }

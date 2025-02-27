@@ -52,12 +52,14 @@ class VisualOdometry {
         std::pair<cv::Mat, cv::Mat> RectifyImage(const cv::Mat& leftImage, const cv::Mat& rightImage);
 
         // Method to compute stereo odometry
-        std::pair<cv::Mat, cv::Mat> StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur,
-                        cv::Mat rightImage_pre, cv::Mat rightImage_cur, cv::Mat init_R, cv::Mat init_T);
+        cv::Mat StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur,
+                        cv::Mat rightImage_pre, cv::Mat rightImage_cur); //, cv::Mat init_R, cv::Mat init_T);
 
         // Motion estimation from two sets of 2D points and depth map.
         bool motionEstimation(const std::vector<cv::Point2f>& image1_points, const std::vector<cv::Point2f>& image2_points,
                             const cv::Mat& depth, float max_depth = 500.0f);
+
+        void updatePose(std::vector<cv::Mat>& T_prev, cv::Mat& T_rel, int id);
 
         // const std::vector<cv::Point2f> &contours, cv::Mat &contour_3d,
 
@@ -67,11 +69,11 @@ class VisualOdometry {
         //                     std::vector<cv::Point2f> &pts_prev_L, std::vector<cv::Point2f> &pts_cur_L) {
     private:
         // Step 2: Define camera parameters
-        cv::Mat K1 = (cv::Mat_<double>(3, 3) << 320.856, 0, 320.1928, 0, 240.856, 240.2157, 0, 0, 1); // Left camera intrinsic
-        cv::Mat K2 = (cv::Mat_<double>(3, 3) << 320.856, 0, 320.1928, 0, 240.856, 240.2157, 0, 0, 1); // Right camera intrinsic
-        cv::Mat D1 = (cv::Mat_<double>(1, 5) << -0.351, 0.173, 0, 0, 0); // Left camera distortion
-        cv::Mat D2 = (cv::Mat_<double>(1, 5) << -0.351, 0.173, 0, 0, 0); // Right camera distortion
-        cv::Mat R = (cv::Mat_<double>(3, 3) << 0.9998, 0.0175, -0.0048, -0.0175, 0.9998, -0.0053, 0.0048, 0.0053, 1.0000); // Rotation between cameras
+        cv::Mat K1 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Left camera intrinsic
+        cv::Mat K2 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Right camera intrinsic
+        cv::Mat D1 = (cv::Mat_<double>(1, 5) << 0, 0, 0, 0, 0); // Left camera distortion
+        cv::Mat D2 = (cv::Mat_<double>(1, 5) << 0, 0, 0, 0, 0); // Right camera distortion
+        cv::Mat R = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1.0000); // Rotation between cameras
         cv::Mat T = (cv::Mat_<double>(3, 1) << 0.085, 0, 0); // Translation between cameras
         cv::Ptr<cv::ORB> orb = cv::ORB::create();
         // cv::Mat disparity;

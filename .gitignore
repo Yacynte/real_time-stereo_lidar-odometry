@@ -46,3 +46,4 @@
 /rpi-cross-compile
 /cam_param.cpp
 /cam_param
+/.venv

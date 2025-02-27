@@ -43,7 +43,7 @@ void listen_for_esc() {
 
     while (true) {
         char ch = getchar(); // Read a single character
-        if (ch == 27) { // ESC key
+        if (ch == 27 || interupt) { // ESC key
             interupt = true;  // Set interrupt flag
             std::cout << "Esc key pressed. Interrupt signal sent!" << std::endl;
             break;
@@ -53,8 +53,7 @@ void listen_for_esc() {
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore old terminal settings
 }
 
-void camera_record(StereoCamera stereoCam, VisualOdometry vo, 
-                    std::vector<cv::Mat>& totalTranslation, std::vector<cv::Mat>& totalRotation){
+void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Mat>& totalTranslation, std::vector<cv::Mat>& totalRotation){
     // StereoCamera stereoCam(0, 2); // Adjust IDs based on your setup
 
     
@@ -65,24 +64,30 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
     // Initial pose
     // cv::Mat tvec = (cv::Mat_<double>(3, 1) << 0, 0, 0);
     // cv::Mat R_matrix = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
-    totalRotation.push_back((cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1));
-    totalTranslation.push_back((cv::Mat_<double>(3, 1) << 0, 0, 0));
+    // totalRotation.push_back((cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1));
+    // totalTranslation.push_back((cv::Mat_<double>(3, 1) << 0, 0, 0));
+    // totalTranslation.push_back((cv::Mat_<double>(4, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
+    cv::Mat identity = cv::Mat::eye(4, 4, CV_32F);
+    totalTranslation.push_back(identity);
+    
     while (!interupt) {
         // cv::Mat leftFrame, rightFrame;
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
-        std::pair<cv::Mat, cv::Mat> motionPair;
-        if (elapsed >= 100) { // 1000 ms / 20 FPS = 50 ms
+        cv::Mat rel_transform;
+        if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
             // Capture stereo frames
             if (stereoCam.captureFrames(leftFrame, rightFrame)) {
                 startTime = std::chrono::steady_clock::now(); // Reset timer
                 cv::imwrite("../data/left/left_" + std::to_string(frameCounter) + ".png", leftFrame);
                 cv::imwrite("../data/right/right_" + std::to_string(frameCounter) + ".png", rightFrame);
                 if (frameCounter > 0){
-                    motionPair = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
-                    totalTranslation.push_back(motionPair.first);
-                    totalRotation.push_back(motionPair.second);
+                    rel_transform = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame); //, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
+                    vo.updatePose(totalTranslation, rel_transform, frameCounter-1);
+                    
+                    // totalTranslation.push_back(motionPair.first);
+                    totalRotation.push_back(rel_transform);
                     // std::cout<<"frame Count: "<< frameCounter <<std::endl;
                     // std::cout<<"time diff ms: "<< elapsed <<std::endl;
                     // std::cout<<motionPair.first[2]<<std::endl;
@@ -100,6 +105,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
             } 
             else {
                 std::cerr << "Failed to capture stereo frames" << std::endl;
+                interupt = true;
                 break;
             }                   
 
@@ -115,6 +121,22 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo,
         // if (totalTime >= 7000) // Stop after 1000 frames (adjust as needed)
         //     break;
     }
+
+    cv::FileStorage fs("../transformations_camera.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+
+    fs << "TotalRotation" << "[";
+    for (const auto& R : totalRotation) {
+        fs << R;
+    }
+    fs << "]";
+
+    fs << "TotalTranslation" << "[";
+    for (const auto& T : totalTranslation) {
+        fs << T; // Convert vector to Mat for saving
+    }
+    fs << "]";
+
+    fs.release();
     
 
 }
@@ -134,9 +156,14 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
     // pcl::PointCloud<pcl::PointXYZ>::Ptr scans_pre;
     // pcl::PointCloud<pcl::PointXYZ>::Ptr scans_cur;
 
-    std::pair<cv::Mat, cv::Mat> motionPair;
+    cv::Mat rel_transform;
     int frameCounter = 0;
-
+    // totalRotation.push_back((cv::Mat::eye(4, 4, CV_32F)))
+    // totalRotation.push_back((cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1));
+    // totalTranslation.push_back((cv::Mat_<double>(3, 1) << 0, 0, 0));
+    // totalTranslation.push_back((cv::Mat_<double>(4, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
+    cv::Mat identity = cv::Mat::eye(4, 4, CV_32F);
+    totalTranslation.push_back(identity);
     while (!interupt) {
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
@@ -144,28 +171,16 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
         if (elapsed >= 100) { // 1000 ms / 20 FPS = 50 ms
             if (lidarscan.getScans(scans_cur)) {
                 startTime = std::chrono::steady_clock::now(); // Reset timer
-                std::cout << "Got lidar scan" <<std::endl;
-                std::cout << "frame: " << frameCounter <<std::endl;
+                // std::cout << "Got lidar scan" <<std::endl;
+                // std::cout << "frame: " << frameCounter <<std::endl;
 
                 if(frameCounter > 0){
 
-                    if (!scans_cur || scans_cur->empty()) {
-                        std::cerr << "Error: scans_cur is null or empty!" << std::endl;
-                        return -1;
-                    }
-                    
-                    if (frameCounter > 0 && (!scans_pre || scans_pre->empty())) {
-                        std::cerr << "Error: scans_pre is null or empty!" << std::endl;
-                        return -1;
-                    }
-
-                    std::cout << "pre cloud size using: " << scans_pre->points.size() << std::endl;
-                    std::cout << "Cur cloud size using: " << scans_cur->points.size() << std::endl;
-                    std::cout << "Entering lidar odometry" <<std::endl;
-
-                    motionPair = lidar_odom.lidar_odom(scans_pre, scans_cur, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
-                    totalTranslation.push_back(motionPair.first);
-                    totalRotation.push_back(motionPair.second);
+                    rel_transform = lidar_odom.lidar_odom(scans_pre, scans_cur);//, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
+                    lidar_odom.updatePose(totalTranslation, rel_transform, frameCounter-1);
+                    // totalTranslation.push_back(motionPair.first);
+                    // std::cout << "totalTranslation[0]:\n" << totalTranslation[frameCounter-1] << std::endl;
+                    totalRotation.push_back(rel_transform);
                 }
 
                 // Deep copy cloud2 into cloud1
@@ -177,6 +192,7 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
             }
             else {
                 std::cerr << "Failed to obtain lidar scans" << std::endl;
+                interupt = true;
                 break;
             } 
 
@@ -188,6 +204,22 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
         }
         
     }
+    cv::FileStorage gs("../transformations_lidar.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+
+    gs << "TotalRotation" << "[";
+    for (const auto& R : totalRotation) {
+        gs << R;
+    }
+    gs << "]";
+
+    gs << "TotalTranslation" << "[";
+    for (const auto& T : totalTranslation) {
+        gs << T; // Convert vector to Mat for saving
+    }
+    gs << "]";
+
+    gs.release();
+
     return 0;
 }
 
@@ -210,8 +242,8 @@ int main(int argc, char** argv) {
     LidarScanner lidarscan(lidar_port);
     lidar_odometry lidar_odom;
 
-    std::vector<cv::Mat> totalRotation;
-    std::vector<cv::Mat> totalTranslation;
+    std::vector<cv::Mat> totalRotation_camera;
+    std::vector<cv::Mat> totalTranslation_camera;
 
     std::vector<cv::Mat> totalRotation_lidar;
     std::vector<cv::Mat> totalTranslation_lidar;
@@ -221,48 +253,20 @@ int main(int argc, char** argv) {
     std::thread inputThread(listen_for_esc);
 
     // Start the recording threads
-    std::thread cameraThread(camera_record, stereoCam, vo, std::ref(totalTranslation), std::ref(totalRotation));
+    std::thread cameraThread(camera_record, stereoCam, vo, std::ref(totalTranslation_camera), std::ref(totalRotation_camera));
     std::thread lidarThread(lidar_record, lidarscan, lidar_odom, std::ref(totalTranslation_lidar), std::ref(totalRotation_lidar));
 
     // Wait for the recording threads to finish
+    lidarThread.join();
     cameraThread.join();
-    // lidarThread.join();
 
     // Join the user input thread (this thread will wait for "stop" command)
     inputThread.join();
 
     
-    cv::FileStorage fs("../transformations_camera.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+    
 
-    fs << "TotalRotation" << "[";
-    for (const auto& R : totalRotation) {
-        fs << R;
-    }
-    fs << "]";
-
-    fs << "TotalTranslation" << "[";
-    for (const auto& T : totalTranslation) {
-        fs << T.t(); // Convert vector to Mat for saving
-    }
-    fs << "]";
-
-    fs.release();
-
-    cv::FileStorage gs("../transformations_lidar.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
-
-    gs << "TotalRotation" << "[";
-    for (const auto& R : totalRotation_lidar) {
-        gs << R;
-    }
-    gs << "]";
-
-    gs << "TotalTranslation" << "[";
-    for (const auto& T : totalTranslation_lidar) {
-        gs << T.t(); // Convert vector to Mat for saving
-    }
-    gs << "]";
-
-    gs.release();
+    
 
     // std::cout<<totalTranslation<<std::endl;
     // std::thread t1(camera_record, stereoCam, vo, &totalTranslation, &totalRotation);

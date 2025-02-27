@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(StereoLiDARRecorder)
-
+# Set the build type to Debug
+set(CMAKE_BUILD_TYPE Debug)
 # Check if cross-compiling
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
     message(STATUS "Cross-compiling for Raspberry Pi 4")

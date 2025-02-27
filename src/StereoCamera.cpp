@@ -29,7 +29,8 @@ StereoCamera::StereoCamera(int leftCamID, int rightCamID) {
 // Destructor: Release camera resources when the object goes out of scope
 StereoCamera::~StereoCamera() {
     leftCam.release();
-    rightCam.release();
+    if (rightCamIDp == 100){rightCam.release();}
+    
 }
 
 void StereoCamera::splitStereoImage(cv::Mat &leftFrame, cv::Mat &rightFrame) {
@@ -329,14 +330,14 @@ void VisualOdometry::feature_matching(const cv::Mat& left_prev, const cv::Mat& l
 }
 
 
-std::pair<cv::Mat, cv::Mat> VisualOdometry::StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur, 
-                                    cv::Mat rightImage_pre, cv::Mat rightImage_cur, cv::Mat init_R, cv::Mat init_T){
+cv::Mat VisualOdometry::StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur, cv::Mat rightImage_pre, cv::Mat rightImage_cur){
+                                    // , cv::Mat init_R, cv::Mat init_T){
 
     if (leftImage_pre.empty() || leftImage_cur.empty() || rightImage_pre.empty() || rightImage_cur.empty()) {
         std::cerr << "One or all images are Empty!" << std::endl;
-        cv::Mat rot = cv::Mat(3, 3, CV_64F, cv::Scalar(-1));
-        cv::Mat trans =cv::Mat(3, 1, CV_64F, cv::Scalar(-1));
-        return std::make_pair(trans, rot);
+        cv::Mat rot = cv::Mat(3, 3, CV_32F, cv::Scalar(-1));
+        cv::Mat trans =cv::Mat(3, 1, CV_32F, cv::Scalar(-1));
+        return (cv::Mat_<double>(4, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1);
     }
      // Step 1: Rectify images
     // std::cout<<"rectify Image"<<std::endl;
@@ -365,12 +366,36 @@ std::pair<cv::Mat, cv::Mat> VisualOdometry::StereoOdometry(cv::Mat leftImage_pre
 
     // totalTranslation.push_back(translation_vector);
     // totalRotation.push_back(rotation_matrix);
-    translation_vector += init_T;
-    rotation_matrix = init_R*rotation_matrix;
-    return std::make_pair(translation_vector, rotation_matrix);
+    // translation_vector += init_T;
+    // rotation_matrix = init_R*rotation_matrix;
+    
+    // return std::make_pair(translation_vector, rotation_matrix);
+
+     // Create a 4x4 transformation matrix and initialize with zeros
+     cv::Mat transform = cv::Mat::eye(4, 4, CV_32F);
+
+     // Set the top-left 3x3 portion to be the rotation matrix R
+     rotation_matrix.copyTo(transform(cv::Range(0, 3), cv::Range(0, 3)));
+ 
+     // Set the top-right 3x1 portion to be the translation vector t
+     translation_vector.copyTo(transform(cv::Range(0, 3), cv::Range(3, 4)));
+ 
+     // Set the last element (bottom-right corner) to 1 for homogeneous coordinates
+    //  transform.at<double>(3, 3) = 1;
+
+    return transform; 
 
 }
 
+void VisualOdometry::updatePose(std::vector<cv::Mat>& T_prev,  cv::Mat& T_rel, int id) {
+    
+    // Invert the transformation matrix (transf)
+    // cv::Mat transf_inv = T_rel.inv();
+    // cv::invert(T_rel, transf_inv);
+
+    T_prev.push_back(T_prev.back() * T_rel);          // New rotation: R1 = R_rel * R0
+    // T_prev.push_back(R_rel * T_prev.back() + T_rel);  // New translation: T1 = R_rel * T0 + T_rel
+}
 
 // Function to load all images from the folder into a vector
 bool ImageLoader::loadImages(std::vector<cv::Mat>& images) {

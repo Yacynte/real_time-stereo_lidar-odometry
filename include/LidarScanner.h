@@ -51,8 +51,9 @@ class LidarScanner1 {
 
 class lidar_odometry {
     public:
-    std::pair<cv::Mat, cv::Mat> lidar_odom(pcl::PointCloud<pcl::PointXYZ>::Ptr &scans_pre, 
-                                            pcl::PointCloud<pcl::PointXYZ>::Ptr &scans_cur, cv::Mat init_R, cv::Mat init_T);
+    cv::Mat lidar_odom(pcl::PointCloud<pcl::PointXYZ>::Ptr scans_pre, 
+                                            pcl::PointCloud<pcl::PointXYZ>::Ptr scans_cur); //, cv::Mat init_R, cv::Mat init_T);
+    void updatePose(std::vector<cv::Mat>& T_prev, cv::Mat& T_rel, int id);
     private:
         // Define a function to downsample the point cloud
         pcl::PointCloud<pcl::PointXYZ>::Ptr downsampleCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud);
@@ -63,8 +64,8 @@ class lidar_odometry {
         // Function to estimate motion using ICP
         Eigen::Matrix4f estimateMotion(pcl::PointCloud<pcl::PointXYZ>::Ptr source, pcl::PointCloud<pcl::PointXYZ>::Ptr target);
         Eigen::Matrix4f transformation;
-        cv::Mat rotation_matrix;                // Sotre Rotation matrix 
-        cv::Mat translation_vector;
+        cv::Mat transformation_matrix;                // Sotre Rotation matrix 
+        // cv::Mat translation_vector;
         
 };
 
@@ -75,6 +76,7 @@ class LidarScanner {
     
         bool initialize();
         bool getScans(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_);
+        
         // void savePointCloud(const std::string& filename);
     
     private:
