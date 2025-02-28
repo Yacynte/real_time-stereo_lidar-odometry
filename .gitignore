@@ -41,7 +41,6 @@
 /include/build
 /include/opencv
 /include/lidar
-/include/rplidar
 /build_rpi
 /rpi-cross-compile
 /cam_param.cpp
