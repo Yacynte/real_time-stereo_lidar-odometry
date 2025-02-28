@@ -13,7 +13,7 @@ def load_translations(json_file):
     # # Handle NaNs: Replace with 0 (or use np.isnan to remove them)
     # translations_rel = np.nan_to_num(translations_rel.reshape((-1,4,4)), nan=0.0)  # Replace NaN with 0
     
-    translations = np.array([np.array(entry["data"]) for entry in data["TotalTranslation"]]) # Flatten each matrix
+    translations = np.array([np.array(entry["data"]) for entry in data["TotalTransformation"]]) # Flatten each matrix
     # Handle NaNs: Replace with 0 (or use np.isnan to remove them)
     translations = np.nan_to_num(translations.reshape((-1,4,4)), nan=0.0)  # Replace NaN with 0
 

@@ -8,30 +8,75 @@
 #include "StereoCamera.h"
 #include "LidarScanner.h"
 #include <atomic>
-// #include <unistd.h>  // For _getch() (on Unix-like systems)
+
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <filesystem>
 #include <termios.h> // For termios functions
 
 std::atomic<bool> interupt(false);  // Atomic flag to safely stop the process
 
-// Function to handle user input for interrupting the process
-// void user_input() {
-//     std::string userCommand;
-//     while (true) {
-//         // std::getline(std::cin, userCommand);
-//         // if (userCommand == "stop") {
-//         //     interupt = true; // Set the flag to true when the user inputs "stop"
-//         //     break;
-//         // }
-//         char key;
-//         if (std::cin >> key) {
-//             if (key == 27) { // Check if Esc key is pressed (ASCII code 27)
-//                 interupt = true;
-//                 std::cout << "Esc key pressed. Interrupt signal sent!" << std::endl;
-//                 break;
-//             }
-//         }
-//     }
-// }
+// -------------------- Stereo Image Saving --------------------
+std::queue<std::pair<cv::Mat, std::string>> imageQueue;
+std::mutex imageMutex;
+std::condition_variable imageCondVar;
+bool stopImageSaving = false;
+
+// -------------------- PCD Saving --------------------
+std::queue<std::pair<pcl::PointCloud<pcl::PointXYZ>::Ptr, std::string>> pcdQueue;
+std::mutex pcdMutex;
+std::condition_variable pcdCondVar;
+bool stopPCDSaving = false;
+
+// -------------------- Ensure Directories Exist --------------------
+void createDirectories() {
+    std::filesystem::create_directories("data/images/left");  // Left camera images
+    std::filesystem::create_directories("data/images/right"); // Right camera images
+    std::filesystem::create_directories("data/pcd");   // PCD files
+}
+
+// -------------------- Image Saving Thread --------------------
+void saveImages() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(imageMutex);
+        imageCondVar.wait(lock, [] { return !imageQueue.empty() || stopImageSaving; });
+
+        if (stopImageSaving && imageQueue.empty()) break;
+
+        if (!imageQueue.empty()) {
+            auto imgPair = imageQueue.front();
+            imageQueue.pop();
+            lock.unlock();
+
+            cv::imwrite(imgPair.second, imgPair.first); // Save image
+            // std::cout << "Saved Image: " << imgPair.second << std::endl;
+
+            lock.lock();
+        }
+    }
+}
+
+// -------------------- PCD Saving Thread --------------------
+void savePCDFiles() {
+    while (true) {
+        std::unique_lock<std::mutex> lock(pcdMutex);
+        pcdCondVar.wait(lock, [] { return !pcdQueue.empty() || stopPCDSaving; });
+
+        if (stopPCDSaving && pcdQueue.empty()) break;
+
+        if (!pcdQueue.empty()) {
+            auto pcdPair = pcdQueue.front();
+            pcdQueue.pop();
+            lock.unlock();
+
+            pcl::io::savePCDFileBinary(pcdPair.second, *pcdPair.first); // Save PCD
+            // std::cout << "Saved PCD: " << pcdPair.second << std::endl;
+
+            lock.lock();
+        }
+    }
+}
 
 // Non-blocking keyboard input function for ESC key press
 void listen_for_esc() {
@@ -53,7 +98,8 @@ void listen_for_esc() {
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore old terminal settings
 }
 
-void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Mat>& totalTranslation, std::vector<cv::Mat>& totalRotation){
+
+void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Mat>& TotalTransformation){
     // StereoCamera stereoCam(0, 2); // Adjust IDs based on your setup
 
     
@@ -69,7 +115,9 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
     // totalTranslation.push_back((cv::Mat_<double>(4, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1));
     cv::Mat leftFrame_pre, rightFrame_pre, leftFrame, rightFrame;
     cv::Mat identity = cv::Mat::eye(4, 4, CV_32F);
-    totalTranslation.push_back(identity);
+    // Define a vector to store timestamps
+    std::vector<double> timestamps;
+    TotalTransformation.push_back(identity);
     
     while (!interupt) {
         // cv::Mat leftFrame, rightFrame;
@@ -79,15 +127,31 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
         if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
             // Capture stereo frames
             if (stereoCam.captureFrames(leftFrame, rightFrame)) {
+                // Get current time in seconds with microsecond precision
+                auto now = std::chrono::system_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch());
+                double timestamp = duration.count() / 1e6;  // Convert microseconds to seconds
+                // Store timestamp
+                timestamps.push_back(timestamp);
+
+                std::string leftPath = "data/images/left/left_" + std::to_string(timestamp) + ".png";
+                std::string rightPath = "data/images/right/right_" + std::to_string(timestamp) + ".png";
+
+                {
+                    std::lock_guard<std::mutex> lock(imageMutex);
+                    imageQueue.push({leftFrame, leftPath});
+                    imageQueue.push({rightFrame, rightPath});
+                }
+                imageCondVar.notify_one(); // Notify saving thread
+
                 startTime = std::chrono::steady_clock::now(); // Reset timer
-                cv::imwrite("../data/left/left_" + std::to_string(frameCounter) + ".png", leftFrame);
-                cv::imwrite("../data/right/right_" + std::to_string(frameCounter) + ".png", rightFrame);
+                
                 if (frameCounter > 0){
                     rel_transform = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame); //, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
-                    vo.updatePose(totalTranslation, rel_transform, frameCounter-1);
+                    vo.updatePose(TotalTransformation, rel_transform, frameCounter-1);
                     
                     // totalTranslation.push_back(motionPair.first);
-                    totalRotation.push_back(rel_transform);
+                    // totalRotation.push_back(rel_transform);
                     // std::cout<<"frame Count: "<< frameCounter <<std::endl;
                     // std::cout<<"time diff ms: "<< elapsed <<std::endl;
                     // std::cout<<motionPair.first[2]<<std::endl;
@@ -112,7 +176,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
             frameCounter++;
             auto curTime = std::chrono::steady_clock::now();
             auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
-            std::cout<<"frame Count: "<< frameCounter <<std::endl;
+            // std::cout<<"frame Count: "<< frameCounter <<std::endl;
             // std::cout<<"time diff ms: "<< totalTime <<std::endl;
             
         }        
@@ -122,17 +186,21 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
         //     break;
     }
 
+    // Stop saving thread
+    {
+        std::lock_guard<std::mutex> lock(imageMutex);
+        stopImageSaving = true;
+    }
+    imageCondVar.notify_one();
+
     cv::FileStorage fs("../transformations_camera.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
 
-    fs << "TotalRotation" << "[";
-    for (const auto& R : totalRotation) {
-        fs << R;
-    }
-    fs << "]";
-
-    fs << "TotalTranslation" << "[";
-    for (const auto& T : totalTranslation) {
-        fs << T; // Convert vector to Mat for saving
+    fs << "TotalTransformation" << "[";
+    for (size_t i = 0; i < TotalTransformation.size(); i++) {
+        fs << "{";
+        fs << "timestamp" << timestamps[i];  // Use the corresponding timestamp
+        fs << "matrix" << TotalTransformation[i];
+        fs << "}";
     }
     fs << "]";
 
@@ -141,7 +209,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
 
 }
 
-int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<cv::Mat>& totalTranslation, std::vector<cv::Mat>& totalRotation){
+int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<cv::Mat>& TotalTransformation){
 
     if (!lidarscan.initialize()) {
         std::cerr << "RPLIDAR C1 initialization failed!" << std::endl;
@@ -158,18 +226,35 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
 
     cv::Mat rel_transform;
     int frameCounter = 0;
+    // Define a vector to store timestamps
+    std::vector<double> timestamps;
     // totalRotation.push_back((cv::Mat::eye(4, 4, CV_32F)))
     // totalRotation.push_back((cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1));
     // totalTranslation.push_back((cv::Mat_<double>(3, 1) << 0, 0, 0));
     // totalTranslation.push_back((cv::Mat_<double>(4, 4) << 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
     cv::Mat identity = cv::Mat::eye(4, 4, CV_32F);
-    totalTranslation.push_back(identity);
+    TotalTransformation.push_back(identity);
     while (!interupt) {
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
         
         if (elapsed >= 100) { // 1000 ms / 20 FPS = 50 ms
             if (lidarscan.getScans(scans_cur)) {
+
+                // Get current time in seconds with microsecond precision
+                auto now = std::chrono::system_clock::now();
+                auto duration = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch());
+                double timestamp = duration.count() / 1e6;  // Convert microseconds to seconds
+                // Store timestamp
+                timestamps.push_back(timestamp);
+
+                std::string pcdFilename = "data/pcd/pcd_" + std::to_string(timestamp) + ".pcd";
+                {
+                    std::lock_guard<std::mutex> lock(pcdMutex);
+                    pcdQueue.push({scans_cur, pcdFilename});
+                }
+                pcdCondVar.notify_one(); // Notify saving thread
+
                 startTime = std::chrono::steady_clock::now(); // Reset timer
                 // std::cout << "Got lidar scan" <<std::endl;
                 // std::cout << "frame: " << frameCounter <<std::endl;
@@ -177,10 +262,10 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
                 if(frameCounter > 0){
 
                     rel_transform = lidar_odom.lidar_odom(scans_pre, scans_cur);//, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
-                    lidar_odom.updatePose(totalTranslation, rel_transform, frameCounter-1);
+                    lidar_odom.updatePose(TotalTransformation, rel_transform, frameCounter-1);
                     // totalTranslation.push_back(motionPair.first);
                     // std::cout << "totalTranslation[0]:\n" << totalTranslation[frameCounter-1] << std::endl;
-                    totalRotation.push_back(rel_transform);
+                    // totalRotation.push_back(rel_transform);
                 }
 
                 // Deep copy cloud2 into cloud1
@@ -199,29 +284,35 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
             frameCounter++;
             auto curTime = std::chrono::steady_clock::now();
             auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
-            std::cout<<"frame Count lidar: "<< frameCounter <<std::endl;
+            // std::cout<<"frame Count lidar: "<< frameCounter <<std::endl;
             // std::cout<<"time lidar ms: "<< totalTime <<std::endl;
         }
         
     }
-    cv::FileStorage gs("../transformations_lidar.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
 
-    gs << "TotalRotation" << "[";
-    for (const auto& R : totalRotation) {
-        gs << R;
+    {
+        std::lock_guard<std::mutex> lock(pcdMutex);
+        stopPCDSaving = true;
     }
-    gs << "]";
+    pcdCondVar.notify_one();
 
-    gs << "TotalTranslation" << "[";
-    for (const auto& T : totalTranslation) {
-        gs << T; // Convert vector to Mat for saving
+    cv::FileStorage fs("../transformations_lidar.json", cv::FileStorage::WRITE | cv::FileStorage::FORMAT_JSON);
+
+    fs << "TotalTransformation" << "[";
+    for (size_t i = 0; i < TotalTransformation.size(); i++) {
+        fs << "{";
+        fs << "timestamp" << timestamps[i];  // Use the corresponding timestamp
+        fs << "matrix" << TotalTransformation[i];
+        fs << "}";
     }
-    gs << "]";
+    fs << "]";
 
-    gs.release();
+    fs.release();
 
     return 0;
 }
+
+
 
 int main(int argc, char** argv) {
     if (argc < 4) {
@@ -242,24 +333,33 @@ int main(int argc, char** argv) {
     LidarScanner lidarscan(lidar_port);
     lidar_odometry lidar_odom;
 
-    std::vector<cv::Mat> totalRotation_camera;
-    std::vector<cv::Mat> totalTranslation_camera;
+    std::vector<cv::Mat> TotalTransformation_camera;
 
-    std::vector<cv::Mat> totalRotation_lidar;
-    std::vector<cv::Mat> totalTranslation_lidar;
+    std::vector<cv::Mat> TotalTransformation_lidar;
+    createDirectories(); // Ensure save directories exist
+
     // camera_record(stereoCam, vo, totalTranslation, totalRotation);
 
     // Launching user input in a separate thread
     std::thread inputThread(listen_for_esc);
 
-    // Start the recording threads
-    std::thread cameraThread(camera_record, stereoCam, vo, std::ref(totalTranslation_camera), std::ref(totalRotation_camera));
-    std::thread lidarThread(lidar_record, lidarscan, lidar_odom, std::ref(totalTranslation_lidar), std::ref(totalRotation_lidar));
+    // Start image-saving thread
+    std::thread saveImageThread(saveImages);
+
+    // Start pcd-saving thread
+    std::thread savePCDThread(savePCDFiles);
+
+    // Start the camera recording threads
+    std::thread cameraThread(camera_record, stereoCam, vo, std::ref(TotalTransformation_camera));
+
+    // Start the pcd recording threads
+    std::thread lidarThread(lidar_record, lidarscan, lidar_odom, std::ref(TotalTransformation_lidar));
 
     // Wait for the recording threads to finish
     lidarThread.join();
     cameraThread.join();
-
+    saveImageThread.join();
+    savePCDThread.join();
     // Join the user input thread (this thread will wait for "stop" command)
     inputThread.join();
 
