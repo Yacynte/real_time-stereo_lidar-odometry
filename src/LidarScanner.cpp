@@ -94,7 +94,7 @@ pcl::PointCloud<pcl::PointXYZ>::Ptr LidarScanner1::convertScanToPointCloud() {
 pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_odometry::downsampleCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud) {
     pcl::VoxelGrid<pcl::PointXYZ> sor;
     sor.setInputCloud(cloud);
-    sor.setLeafSize(0.9f, 0.9f, 0.9f);
+    sor.setLeafSize(0.1f, 0.1f, 0.1f);
     pcl::PointCloud<pcl::PointXYZ>::Ptr filteredCloud(new pcl::PointCloud<pcl::PointXYZ>);
     sor.filter(*filteredCloud);
     return filteredCloud;
@@ -115,7 +115,7 @@ Eigen::Matrix4f lidar_odometry::estimateMotion(pcl::PointCloud<pcl::PointXYZ>::P
     pcl::IterativeClosestPoint<pcl::PointXYZ, pcl::PointXYZ> icp;
     icp.setInputSource(source);
     icp.setInputTarget(target);
-    icp.setMaxCorrespondenceDistance(0.1);
+    icp.setMaxCorrespondenceDistance(0.2);
     icp.setTransformationEpsilon(1e-6);
     icp.setMaximumIterations(1000);
 
@@ -261,6 +261,7 @@ bool LidarScanner::getScans(pcl::PointCloud<pcl::PointXYZ>::Ptr &cloud_) {
         }
     }
 
+    if(!cloud_ || cloud_->empty()) return false;
     // std::cout << "Cloud size using .size(): " << cloud_->points.size() << std::endl;
     return true;
 }

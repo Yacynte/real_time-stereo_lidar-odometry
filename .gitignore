@@ -46,3 +46,5 @@
 /cam_param.cpp
 /cam_param
 /.venv
+/receiving_camera_lidar/build
+/sending_camera_lidar/build

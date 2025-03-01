@@ -1,8 +1,8 @@
 // StereoCamera.h
 #pragma once
-#include <opencv2/opencv.hpp>
+
 #include <iostream>
-#include <opencv2/features2d.hpp> // ORB and feature detection
+ // ORB and feature detection
 #include <opencv2/calib3d.hpp>
 #include <cassert> // Include this header
 #include <opencv2/core/cvstd.hpp>
@@ -12,6 +12,13 @@
 #include <opencv2/opencv.hpp>
 #include <filesystem> // For directory and file handling
 
+#include <opencv2/features2d.hpp>
+#include <opencv2/opencv.hpp>
+#include <omp.h>
+#include <numeric>      // std::accumulate
+#include <unordered_set>
+
+// #include <opencv2/core/parallel/parallel.hpp>
 class StereoCamera {
     public:
         /**
@@ -44,13 +51,33 @@ class StereoCamera {
          */
         bool checkCameras();
         void splitStereoImage(cv::Mat& leftFrame, cv::Mat& rightFrame);
+
+        cv::Mat K1 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Left camera intrinsic
+        cv::Mat K2 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Right camera intrinsic
+        cv::Mat D1 = (cv::Mat_<double>(1, 5) << 0, 0, 0, 0, 0); // Left camera distortion
+        cv::Mat D2 = (cv::Mat_<double>(1, 5) << 0, 0, 0, 0, 0); // Right camera distortion
+        cv::Mat R = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1.0000); // Rotation between cameras
+        cv::Mat T = (cv::Mat_<double>(3, 1) << 0.085, 0, 0); // Translation between cameras
+
+        // Method to rectify images
+        void RectifyImage(cv::Mat& leftImage, cv::Mat& rightImage);
+
+        
 };
 
 class VisualOdometry {
     public:
-        // Method to rectify images
-        std::pair<cv::Mat, cv::Mat> RectifyImage(const cv::Mat& leftImage, const cv::Mat& rightImage);
+        // Constructor to initialize fx, fy, cx, cy
+        VisualOdometry() {
+            fx = K1.at<double>(0, 0);
+            fy = K1.at<double>(1, 1);
+            cx = K1.at<double>(0, 2);
+            cy = K1.at<double>(1, 2);
 
+            K1.convertTo(K1_float, CV_32F);
+            D1.convertTo(D1_float, CV_32F);
+        }
+        
         // Method to compute stereo odometry
         cv::Mat StereoOdometry(cv::Mat leftImage_pre, cv::Mat leftImage_cur,
                         cv::Mat rightImage_pre, cv::Mat rightImage_cur); //, cv::Mat init_R, cv::Mat init_T);
@@ -68,7 +95,7 @@ class VisualOdometry {
         // void feature_matching(const cv::Mat &left_prev, const cv::Mat &left_cur, 
         //                     std::vector<cv::Point2f> &pts_prev_L, std::vector<cv::Point2f> &pts_cur_L) {
     private:
-        // Step 2: Define camera parameters
+         // Step 2: Define camera parameters
         cv::Mat K1 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Left camera intrinsic
         cv::Mat K2 = (cv::Mat_<double>(3, 3) << 320, 0, 240, 0, 320, 240, 0, 0, 1); // Right camera intrinsic
         cv::Mat D1 = (cv::Mat_<double>(1, 5) << 0, 0, 0, 0, 0); // Left camera distortion
@@ -76,6 +103,10 @@ class VisualOdometry {
         cv::Mat R = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1.0000); // Rotation between cameras
         cv::Mat T = (cv::Mat_<double>(3, 1) << 0.085, 0, 0); // Translation between cameras
         cv::Ptr<cv::ORB> orb = cv::ORB::create();
+
+        float fx, fy, cx, cy;
+        cv::Mat K1_float, D1_float;
+        
         // cv::Mat disparity;
         // cv::Mat depth_map;
         cv::Mat rvec;                           // Sotre Rotation vector
@@ -85,8 +116,8 @@ class VisualOdometry {
         // std::vector<cv::Mat> totalTranslation;
         // cv::Mat depth; 
         // Rectified images
-        cv::Mat leftImageRec_pre, leftImageRec_cur;
-        cv::Mat rightImageRec_pre, rightImageRec_cur;
+        // cv::Mat leftImageRec_pre, leftImageRec_cur;
+        // cv::Mat rightImageRec_pre, rightImageRec_cur;
         // double baseline_;      // Baseline distance between the stereo cameras
         // double focal_length_;  // Focal length of the left camera
         // Reconstruct 3D points from 2D points using depth information.

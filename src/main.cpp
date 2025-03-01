@@ -69,10 +69,10 @@ void savePCDFiles() {
             auto pcdPair = pcdQueue.front();
             pcdQueue.pop();
             lock.unlock();
-
+            if(!pcdPair.first->empty()){;
             pcl::io::savePCDFileBinary(pcdPair.second, *pcdPair.first); // Save PCD
             // std::cout << "Saved PCD: " << pcdPair.second << std::endl;
-
+            }
             lock.lock();
         }
     }
@@ -103,8 +103,8 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
     // StereoCamera stereoCam(0, 2); // Adjust IDs based on your setup
 
     
-    auto startTime = std::chrono::steady_clock::now();
-    auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    // auto start = std::chrono::steady_clock::now();
     // auto totalTime =  std::chrono::duration_cast<std::chrono::milliseconds>(startTime - start).count();
     int frameCounter = 0;
     // Initial pose
@@ -122,9 +122,9 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
     while (!interupt) {
         // cv::Mat leftFrame, rightFrame;
         auto currentTime = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - now).count();
         cv::Mat rel_transform;
-        if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
+        if (elapsed >= 40) { // 1000 ms / 20 FPS = 50 ms
             // Capture stereo frames
             if (stereoCam.captureFrames(leftFrame, rightFrame)) {
                 // Get current time in seconds with microsecond precision
@@ -144,7 +144,7 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
                 }
                 imageCondVar.notify_one(); // Notify saving thread
 
-                startTime = std::chrono::steady_clock::now(); // Reset timer
+                // startTime = std::chrono::steady_clock::now(); // Reset timer
                 
                 if (frameCounter > 0){
                     rel_transform = vo.StereoOdometry(leftFrame_pre, leftFrame, rightFrame_pre, rightFrame); //, totalRotation[frameCounter-1], totalTranslation[frameCounter-1]);
@@ -174,8 +174,8 @@ void camera_record(StereoCamera stereoCam, VisualOdometry vo, std::vector<cv::Ma
             }                   
 
             frameCounter++;
-            auto curTime = std::chrono::steady_clock::now();
-            auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
+            // auto curTime = std::chrono::steady_clock::now();
+            // auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
             // std::cout<<"frame Count: "<< frameCounter <<std::endl;
             // std::cout<<"time diff ms: "<< totalTime <<std::endl;
             
@@ -215,8 +215,8 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
         std::cerr << "RPLIDAR C1 initialization failed!" << std::endl;
         return -1;
     }
-    auto startTime = std::chrono::steady_clock::now();
-    auto start = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    // auto start = std::chrono::steady_clock::now();
 
     // Initialize point cloud pointers
     pcl::PointCloud<pcl::PointXYZ>::Ptr scans_pre(new pcl::PointCloud<pcl::PointXYZ>);
@@ -236,9 +236,9 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
     TotalTransformation.push_back(identity);
     while (!interupt) {
         auto currentTime = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - now).count();
         
-        if (elapsed >= 100) { // 1000 ms / 20 FPS = 50 ms
+        if (elapsed >= 50) { // 1000 ms / 20 FPS = 50 ms
             if (lidarscan.getScans(scans_cur)) {
 
                 // Get current time in seconds with microsecond precision
@@ -247,7 +247,7 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
                 double timestamp = duration.count() / 1e6;  // Convert microseconds to seconds
                 // Store timestamp
                 timestamps.push_back(timestamp);
-
+                
                 std::string pcdFilename = "data/pcd/pcd_" + std::to_string(timestamp) + ".pcd";
                 {
                     std::lock_guard<std::mutex> lock(pcdMutex);
@@ -255,7 +255,7 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
                 }
                 pcdCondVar.notify_one(); // Notify saving thread
 
-                startTime = std::chrono::steady_clock::now(); // Reset timer
+                // startTime = std::chrono::steady_clock::now(); // Reset timer
                 // std::cout << "Got lidar scan" <<std::endl;
                 // std::cout << "frame: " << frameCounter <<std::endl;
 
@@ -282,8 +282,8 @@ int lidar_record(LidarScanner lidarscan, lidar_odometry lidar_odom, std::vector<
             } 
 
             frameCounter++;
-            auto curTime = std::chrono::steady_clock::now();
-            auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
+            // auto curTime = std::chrono::steady_clock::now();
+            // auto totalTime = std::chrono::duration_cast<std::chrono::milliseconds>(curTime - start).count();
             // std::cout<<"frame Count lidar: "<< frameCounter <<std::endl;
             // std::cout<<"time lidar ms: "<< totalTime <<std::endl;
         }
