@@ -1,210 +1,271 @@
-
-#include <opencv2/opencv.hpp>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <unistd.h>
 #include <iostream>
 #include <vector>
+#include <string>
 #include <cstring>
-#include <thread>
-
-#include <pcl/io/pcd_io.h>
-#include <pcl/point_types.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/registration/icp.h>
-#include <pcl/common/io.h>  // For copyPointCloud
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
-
-#include <thread>
-#include <iostream>
-#include <algorithm> 
-#include <chrono>
+#include <opencv2/opencv.hpp>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <atomic>
-
-#include <queue>
-#include <mutex>
+#include <algorithm>
 #include <condition_variable>
 #include <filesystem>
-#include <termios.h> // For termios functions
+#include <thread>
+#include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
+#include <queue>
+#include <mutex>
+#include <termios.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
-std::atomic<bool> interupt(false);  // Atomic flag to safely stop the process
+#define PORT 5005
+#define PACKET_SIZE 4096
 
-#define UDP_PORT 5005
-// #define BUFFER_SIZE 4096
-#define CHUNK_SIZE 4096
+// Atomic flag to safely stop the process
+std::atomic<bool> interrupt(false);
 
+// -------------------- Queues and Synchronization --------------------
+std::queue<std::pair<cv::Mat, std::string>> imageQueue;
+std::mutex imageMutex;
+std::condition_variable imageCondVar;
+std::atomic<bool> stopImageSaving(false);
 
-// Non-blocking keyboard input function for ESC key press
-void listen_for_esc() {
+std::queue<std::pair<pcl::PointCloud<pcl::PointXYZ>::Ptr, std::string>> pcdQueue;
+std::mutex pcdMutex;
+std::condition_variable pcdCondVar;
+std::atomic<bool> stopPCDSaving(false);
+
+// -------------------- Directory Management --------------------
+void createDirectories() {
+    std::filesystem::create_directories("data/images/left");
+    std::filesystem::create_directories("data/images/right");
+    std::filesystem::create_directories("data/pcd");
+}
+
+// -------------------- Image Saving Thread --------------------
+void saveImages() {
+    while (!interrupt) {
+        std::unique_lock<std::mutex> lock(imageMutex);
+        imageCondVar.wait(lock, [] { return !imageQueue.empty() || stopImageSaving; });
+
+        if (stopImageSaving && imageQueue.empty()) break;
+
+        if (!imageQueue.empty()) {
+            auto imgPair = imageQueue.front();
+            imageQueue.pop();
+            lock.unlock();
+            cv::imwrite(imgPair.second, imgPair.first);
+            lock.lock();
+        }
+    }
+}
+
+// -------------------- PCD Saving Thread --------------------
+void savePCDFiles() {
+    while (!interrupt) {
+        std::unique_lock<std::mutex> lock(pcdMutex);
+        pcdCondVar.wait(lock, [] { return !pcdQueue.empty() || stopPCDSaving; });
+
+        if (stopPCDSaving && pcdQueue.empty()) break;
+
+        if (!pcdQueue.empty()) {
+            auto pcdPair = pcdQueue.front();
+            pcdQueue.pop();
+            lock.unlock();
+            if (!pcdPair.first->empty()) {
+                pcl::io::savePCDFileBinary(pcdPair.second, *pcdPair.first);
+            }
+            lock.lock();
+        }
+    }
+}
+
+// -------------------- Non-blocking Keyboard Input --------------------
+void listenForEsc() {
     struct termios oldt, newt;
-    tcgetattr(STDIN_FILENO, &oldt);  // Get current terminal settings
+    tcgetattr(STDIN_FILENO, &oldt);
     newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO); // Disable canonical mode and echo
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt); // Apply new settings
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
 
     while (true) {
-        char ch = getchar(); // Read a single character
-        if (ch == 27 || interupt) { // ESC key
-            interupt = true;  // Set interrupt flag
+        char ch = getchar();
+        if (ch == 27 || interrupt) { // ESC key
+            interrupt = true;
+            stopPCDSaving = true;
+            stopImageSaving = true;
             std::cout << "Esc key pressed. Interrupt signal sent!" << std::endl;
             break;
         }
     }
 
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // Restore old terminal settings
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
 }
 
-
-int setupSocket() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    struct sockaddr_in serverAddr;
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(UDP_PORT);
-    serverAddr.sin_addr.s_addr = INADDR_ANY;
-    bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr));
-    return sock;
-}
-
-// -------------------- Ensure Directories Exist --------------------
-void createDirectories() {
-    std::filesystem::create_directories("data/images/left");  // Left camera images
-    std::filesystem::create_directories("data/images/right"); // Right camera images
-    std::filesystem::create_directories("data/pcd");   // PCD files
-}
-
-void receiveImage(int sock, const std::string& label, const std::string& timestampStr) {
-
-    sockaddr_in senderAddr;
-    socklen_t senderAddrLen = sizeof(senderAddr);
-    // Receive the image in chunks
-    std::vector<unsigned char> imageData;
-    char buffer[CHUNK_SIZE];
-
-    while (true) {
-        int bytesReceived = recvfrom(sock, buffer, CHUNK_SIZE, 0, (struct sockaddr*)&senderAddr, &senderAddrLen);
-        if (bytesReceived <= 0) {
-            std::cerr << "Error receiving image data" << std::endl;
-            break;
-        }
-
-        // Check for "END" marker
-        if (bytesReceived == 3 && std::memcmp(buffer, "END", 3) == 0) {
-            // std::cout << "End of Image Data" << std::endl;
-            break;
-        }
-
-        // Append to image buffer
-        imageData.insert(imageData.end(), buffer, buffer + bytesReceived);
+// -------------------- Data Processing --------------------
+std::pair<int, int> extractDimensions(const std::string& dataDim) {
+    size_t xPos = dataDim.find('x');
+    if (xPos == std::string::npos) {
+        std::cerr << "Invalid dimension format!" << std::endl;
+        return {0, 0};
     }
-
-    // Decode and save the image
-    cv::Mat image = cv::imdecode(imageData, cv::IMREAD_COLOR);
-    if (!image.empty()) {
-        std::string filename = (label == "L" ? "data/images/left/left_" : "data/images/right/right_") + timestampStr + ".png";
-        cv::imwrite(filename, image);
-        // std::cout << "Saved " << filename << std::endl;
-    } else {
-        std::cerr << "Error decoding image" << std::endl;
-    }
+    int height = std::stoi(dataDim.substr(0, xPos));
+    int width = std::stoi(dataDim.substr(xPos + 1));
+    return {height, width};
 }
 
-// Function to receive a PCD point cloud
-void receivePointCloud(int sock, const std::string& timestamp) {
-    std::vector<uint8_t> serializedData;
-    // serializedData.reserve(dataSize);
-
-    // std::vector<unsigned char> imageData;
-    sockaddr_in senderAddr;
-    socklen_t senderAddrLen = sizeof(senderAddr);
-
-    char buffer[CHUNK_SIZE];
-    while (true) {
-        int bytesReceived = recvfrom(sock, buffer, CHUNK_SIZE, 0, (struct sockaddr*)&senderAddr, &senderAddrLen);
-        if (bytesReceived <= 0) {
-            std::cerr << "Error receiving PCD data" << std::endl;
-            break;
-        }
-
-        // Check for "END" marker
-        if (bytesReceived == 3 && std::memcmp(buffer, "END", 3) == 0) {
-            // std::cout << "End of PCD Data" << std::endl;
-            break;
-        }
-
-        // Append to image buffer
-        serializedData.insert(serializedData.end(), buffer, buffer + bytesReceived);
-    }
-
-     // Write the received bytes to a temporary file
-    std::string tempFilename = "temp" + timestamp + ".pcd";
-    std::ofstream tempFile(tempFilename, std::ios::binary);
-    tempFile.write(reinterpret_cast<char*>(serializedData.data()), serializedData.size());
-    tempFile.close();
-
-    // Load the point cloud from the temporary file
-    pcl::PointCloud<pcl::PointXYZ>::Ptr receivedCloud(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PCDReader reader;
-    if (reader.read(tempFilename, *receivedCloud) == -1) {
-        std::cerr << "Error reading PCD file: " << tempFilename << std::endl;
+void processImage(cv::Mat image, const std::string& timestamp, const std::string& type) {
+    if (image.empty()) {
+        std::cerr << "Failed to decode image data!" << std::endl;
         return;
     }
- 
-     // Save the received point cloud
-     std::string filename = "pcd" + timestamp + ".pcd";
-     pcl::io::savePCDFileBinary(filename, *receivedCloud);
-    //  std::cout << "Saved received PCD: " << filename << std::endl;
-
-}
-
-
-int main() {
-    int sock = setupSocket();
-    sockaddr_in senderAddr;
-    socklen_t senderAddrLen = sizeof(senderAddr);
-
-
-    while (!interupt) {
-
-        char headerBuffer[100];  // Buffer for the header
-        int headerBytes = recvfrom(sock, headerBuffer, sizeof(headerBuffer) - 1, 0, (struct sockaddr*)&senderAddr, &senderAddrLen);
-        if (headerBytes <= 0) {
-            std::cerr << "Failed to receive header" << std::endl;
-            continue;
-        }
-        headerBuffer[headerBytes] = '\0';  // Null-terminate
-
-        // Parse the header: "L|1710001234567|"
-        std::string header(headerBuffer);
-        size_t firstPipe = header.find('|');
-        size_t secondPipe = header.find('|', firstPipe + 1);
-
-        if (firstPipe == std::string::npos || secondPipe == std::string::npos) {
-            std::cerr << "Invalid header format" << std::endl;
-            continue;
-        }
-
-        std::string label = header.substr(0, firstPipe);  // "L" or "R"
-        std::string timestampStr = header.substr(firstPipe + 1, secondPipe - firstPipe - 1);
-        uint64_t timestamp = std::stoull(timestampStr);  // Convert to integer
-
-        std::cout << "Receiving " << label << " image at " << timestamp << std::endl;
-
-
-        std::thread imageThread, lidarThread;
-        if (label == "L" || label == "R") {
-            imageThread = std::thread(receiveImage, sock, label, timestampStr);
-        } else {
-            lidarThread = std::thread(receivePointCloud, sock, timestampStr);
-        }
-
-        if (imageThread.joinable()) imageThread.join();
-        if (lidarThread.joinable()) lidarThread.join();
-    
+    std::string typeImage = " ";
+    if(type == "L"){
+        typeImage = "left";
+    }
+    else{
+        typeImage = "right";
     }
 
-    close(sock);
+    std::string path = "data/images/" + typeImage + "/" + type + "_" + timestamp + ".png";
+    {
+        std::lock_guard<std::mutex> lock(imageMutex);
+        imageQueue.push({image, path});
+    }
+    imageCondVar.notify_one();
+}
+
+void processLidar(cv::Mat lidarMatrix, const std::string& timestamp) {
+    if (lidarMatrix.empty()) {
+        std::cerr << "Failed to decode lidar data!" << std::endl;
+        return;
+    }
+
+    if (lidarMatrix.cols != 2) {
+        std::cerr << "Invalid matrix format: Expected 2 columns for (X, Y)" << std::endl;
+        return;
+    }
+
+    pcl::PointCloud<pcl::PointXYZ>::Ptr scans(new pcl::PointCloud<pcl::PointXYZ>);
+    for (int i = 0; i < lidarMatrix.rows; i++) {
+        float x = lidarMatrix.at<float>(i, 0);
+        float y = lidarMatrix.at<float>(i, 1);
+        scans->points.push_back(pcl::PointXYZ(x, y, 0.0));
+    }
+
+    std::string pcdFilename = "data/pcd/pcd_" + timestamp + ".pcd";
+    {
+        std::lock_guard<std::mutex> lock(pcdMutex);
+        pcdQueue.push({scans, pcdFilename});
+    }
+    pcdCondVar.notify_one();
+}
+
+// -------------------- TCP Data Reception --------------------
+void receiveData() {
+    int serverSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSock < 0) {
+        perror("Socket creation failed");
+        return;
+    }
+
+    struct sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(PORT);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(serverSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        perror("Bind failed");
+        close(serverSock);
+        return;
+    }
+
+    if (listen(serverSock, 5) < 0) {
+        perror("Listen failed");
+        close(serverSock);
+        return;
+    }
+
+    std::cout << "Waiting for TCP connections...\n";
+
+    struct sockaddr_in clientAddr;
+    socklen_t clientLen = sizeof(clientAddr);
+    int clientSock = accept(serverSock, (struct sockaddr*)&clientAddr, &clientLen);
+    if (clientSock < 0) {
+        perror("Accept failed");
+        close(serverSock);
+        return;
+    }
+
+    while (!interrupt) {
+        size_t headerSize;
+        recv(clientSock, &headerSize, sizeof(headerSize), 0);
+
+        std::vector<char> headerBuffer(headerSize);
+        recv(clientSock, headerBuffer.data(), headerSize, 0);
+        std::string receivedHeader(headerBuffer.begin(), headerBuffer.end());
+
+        size_t pos1 = receivedHeader.find('|');
+        size_t pos2 = receivedHeader.find('|', pos1 + 1);
+        // size_t pos3 = receivedHeader.find('|', pos2 + 1);
+
+        if (pos1 == std::string::npos || pos2 == std::string::npos ) {
+            std::cerr << "Invalid data format!" << std::endl;
+            // return;
+        }
+
+        std::string type = receivedHeader.substr(0, pos1);
+        std::string timestamp = receivedHeader.substr(pos1 + 1, pos2 - pos1 - 1);
+        // std::string dataDim = receivedHeader.substr(pos2 + 1, pos3 - pos2 - 1);
+
+        size_t imageSize;
+        recv(clientSock, &imageSize, sizeof(imageSize), 0);
+
+        std::vector<uchar> buffer(imageSize);
+        size_t receivedBytes = 0;
+        while (receivedBytes < imageSize) {
+            ssize_t recvSize = recv(clientSock, buffer.data() + receivedBytes, imageSize - receivedBytes, 0);
+            if (recvSize < 0) {
+                perror("Error receiving data");
+                close(clientSock);
+                return;
+            }
+            receivedBytes += recvSize;
+        }
+
+        cv::Mat data = cv::imdecode(buffer, cv::IMREAD_COLOR);
+        if (data.empty()) {
+            std::cerr << "Failed to decode received image\n";
+            return;
+        }
+
+        if (type == "R" || type == "L") {
+            processImage(data, timestamp, type);
+        } else if (type == "D") {
+            processLidar(data, timestamp);
+        } else {
+            std::cerr << "Unknown header type!" << std::endl;
+        }
+    }
+
+    close(clientSock);
+    close(serverSock);
+}
+
+// -------------------- Main Function --------------------
+int main() {
+    createDirectories();
+
+    std::thread inputThread(listenForEsc);
+    std::thread saveImageThread(saveImages);
+    std::thread savePCDThread(savePCDFiles);
+    std::thread receiveThread(receiveData);
+
+    receiveThread.join();
+    saveImageThread.join();
+    savePCDThread.join();
+    inputThread.join();
+
+    std::cout << "Recording complete\n";
     return 0;
 }
